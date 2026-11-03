@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PubMed Review Finder</title>
+<meta name="description" content="Collect every PubMed review on a topic across a range of years, and export the records as CSV or RIS.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column. Search form on top, then a records list ruled like a bibliography. */
+:root {
+  --bg: #f2f6f6; --panel: #ffffff; --fg: #15282e; --muted: #526a71; --line: #cfdcde;
+  --accent: #0a6a75; --accent-fg: #ffffff; --soft: #dfeeef; --warn-bg: #fdf1d8; --warn-fg: #6f4a00;
+  --display: "Newsreader", Georgia, "Times New Roman", serif;
+  --body: "Source Sans 3", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101b1f; --panel: #17262b; --fg: #e4eef0; --muted: #9db2b8; --line: #2e4249;
+    --accent: #5cc5d1; --accent-fg: #0b2024; --soft: #1f373d; --warn-bg: #3a2e12; --warn-fg: #f4d88f;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 16px/1.5 var(--body); }
+main { max-width: 860px; margin: 0 auto; padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 28px; }
+h1 { font: 600 2.2rem/1.1 var(--display); margin: 0 0 6px; text-wrap: balance; }
+header p { margin: 0; color: var(--muted); max-width: 62ch; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+form { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 20px; display: grid; gap: 18px; }
+.field { display: grid; gap: 5px; min-width: 0; }
+.field > label, legend { font-weight: 600; font-size: .9rem; }
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+legend { padding: 0; margin-bottom: 6px; }
+.row { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; }
+.years { display: flex; gap: 8px; align-items: center; }
+.years span { color: var(--muted); }
+input[type=text], input[type=number], input[type=password], input[type=search], select, textarea {
+  width: 100%; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 4px; padding: 8px 10px; min-width: 0; }
+textarea { font: 400 .85rem/1.5 var(--mono); resize: vertical; min-height: 66px; }
+.checks { display: grid; gap: 4px; }
+.checks label { display: flex; gap: 8px; align-items: baseline; }
+.hint { color: var(--muted); font-size: .85rem; }
+.linkbtn { background: none; border: 0; padding: 0; font: inherit; font-size: .85rem; color: var(--accent); text-decoration: underline; cursor: pointer; }
+details.settings summary { cursor: pointer; font-size: .9rem; color: var(--muted); }
+details.settings .field { margin-top: 10px; }
+
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.btn { font: 600 1rem var(--body); border-radius: 4px; padding: 9px 18px; cursor: pointer; border: 1px solid var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-fg); }
+.btn.quiet { background: transparent; color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+#countLine { font-variant-numeric: tabular-nums; }
+#countLine strong { font: 600 1.15rem var(--display); }
+
+#progress { display: grid; gap: 6px; }
+progress { width: 100%; height: 8px; accent-color: var(--accent); }
+.notice { background: var(--warn-bg); color: var(--warn-fg); border-radius: 4px; padding: 10px 14px; font-size: .95rem; }
+
+#results { display: grid; gap: 14px; min-width: 0; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; justify-content: space-between; }
+.bar h2 { font: 600 1.4rem var(--display); margin: 0; font-variant-numeric: tabular-nums; }
+.tools { display: flex; flex-wrap: wrap; gap: 10px; }
+.tools .field { flex: 1 1 220px; }
+.tools .field.sort { flex: 0 1 170px; }
+ol.records { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+ol.records > li { display: grid; grid-template-columns: 3.4rem minmax(0, 1fr); gap: 2px 12px; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.yr { font: 500 .9rem/1.5 var(--mono); color: var(--muted); }
+.ttl { font: 500 1.08rem/1.35 var(--display); overflow-wrap: anywhere; }
+.ttl a { color: var(--fg); text-decoration: none; }
+.ttl a:hover { color: var(--accent); text-decoration: underline; }
+.rec { display: grid; gap: 3px; min-width: 0; }
+.meta { color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
+.meta i { font-style: italic; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: .78rem; }
+.chip { background: var(--soft); border-radius: 3px; padding: 1px 6px; }
+.pmid { font-family: var(--mono); color: var(--muted); }
+.rec details summary { cursor: pointer; font-size: .85rem; color: var(--accent); width: fit-content; }
+.rec details p { margin: 6px 0 2px; font-size: .95rem; max-width: 70ch; white-space: pre-line; }
+#more { justify-self: center; }
+footer { color: var(--muted); font-size: .85rem; border-top: 1px solid var(--line); padding-top: 14px; }
+footer p { margin: 0 0 6px; max-width: 70ch; }
+@media (max-width: 560px) {
+  main { padding-block: 24px 48px; }
+  h1 { font-size: 1.8rem; }
+  form { padding: 14px; }
+  .row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>PubMed Review Finder</h1>
+    <p>Collect every published review on a topic across a range of years, then export the list for your reference manager or spreadsheet.</p>
+  </header>
+
+  <form id="form" novalidate>
+    <div class="field">
+      <label for="topic">Topic</label>
+      <input type="text" id="topic" value="brain evolution" autocomplete="off">
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="mode">How to match the topic</label>
+        <select id="mode">
+          <option value="phrase">Exact phrase in title or abstract</option>
+          <option value="words">All words in title or abstract</option>
+          <option value="broad">Broad, with PubMed's subject mapping</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="from">Publication years</label>
+        <div class="years">
+          <input type="number" id="from" value="1950" min="1700" max="2100" aria-label="From year">
+          <span>to</span>
+          <input type="number" id="to" value="2026" min="1700" max="2100" aria-label="To year">
+        </div>
+      </div>
+    </div>
+    <fieldset>
+      <legend>Article types</legend>
+      <div class="checks">
+        <label><input type="checkbox" id="t-review" value="review" checked> Review</label>
+        <label><input type="checkbox" id="t-systematic" value="systematic review"> Systematic review</label>
+        <label><input type="checkbox" id="t-meta" value="meta-analysis"> Meta-analysis</label>
+      </div>
+    </fieldset>
+    <div class="field">
+      <label for="query">PubMed query</label>
+      <textarea id="query" rows="2" spellcheck="false"></textarea>
+      <div class="hint"><span id="dateNote"></span> · <a id="pubmedLink" href="#" target="_blank" rel="noopener">Open on PubMed</a> <button type="button" class="linkbtn" id="resetQuery" hidden>· Undo my edits</button></div>
+    </div>
+    <details class="settings">
+      <summary>Faster downloads with an NCBI API key</summary>
+      <div class="field">
+        <label for="apiKey">NCBI API key (optional)</label>
+        <input type="password" id="apiKey" autocomplete="off">
+        <span class="hint">A free key from your NCBI account settings raises the limit from 3 to 10 requests per second. It stays in this browser and is only sent to NCBI.</span>
+      </div>
+    </details>
+    <div class="actions">
+      <button type="submit" class="btn primary" id="go">Collect records</button>
+      <button type="button" class="btn quiet" id="stop" hidden>Stop</button>
+      <span id="countLine" aria-live="polite"></span>
+    </div>
+  </form>
+
+  <section id="progress" hidden aria-live="polite">
+    <div id="progressText"></div>
+    <progress id="bar" max="1" value="0"></progress>
+  </section>
+
+  <div class="notice" id="notice" hidden role="status"></div>
+
+  <section id="results" hidden>
+    <div class="bar">
+      <h2 id="resultTitle"></h2>
+      <div class="actions">
+        <button type="button" class="btn quiet" id="csv">Download CSV</button>
+        <button type="button" class="btn quiet" id="ris">Download RIS</button>
+      </div>
+    </div>
+    <div class="tools">
+      <div class="field">
+        <label for="filter">Filter these results</label>
+        <input type="search" id="filter" placeholder="Title, author, journal or abstract">
+      </div>
+      <div class="field sort">
+        <label for="sort">Sort by</label>
+        <select id="sort">
+          <option value="new">Newest first</option>
+          <option value="old">Oldest first</option>
+          <option value="journal">Journal</option>
+        </select>
+      </div>
+    </div>
+    <ol class="records" id="list"></ol>
+    <button type="button" class="btn quiet" id="more" hidden>Show 100 more</button>
+  </section>
+
+  <footer>
+    <p>Data comes directly from PubMed through NCBI's E-utilities. Article types are PubMed's own labels, so very recent papers may not be labelled yet.</p>
+    <p>PubMed's coverage before 1966 is thin and many older records have no abstract, so early years undercount what was actually published.</p>
+  </footer>
+</main>
+
+<script>
+const EUTILS = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/';
+const TOOL = 'pubmed-review-finder';
+const MAX_IDS = 9999;   // PubMed's hard limit on IDs per search
+const BATCH = 200;      // records per download request
+const PAGE = 100;       // records added to the list per click
+const MAX_ATTEMPTS = 6;
+
+const $ = id => document.getElementById(id);
+const store = {
+  get(k) { try { return localStorage.getItem(k) || ''; } catch { return ''; } },
+  set(k, v) { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} }
+};
+
+/* ---------- Query building ---------- */
+
+function topicClause(text, mode) {
+  const clean = text.replace(/["\[\]]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!clean) return '';
+  if (mode === 'phrase') return `"${clean}"[Title/Abstract]`;
+  if (mode === 'words') return clean.split(' ').map(w => `${w}[Title/Abstract]`).join(' AND ');
+  return `(${clean})`;
+}
+
+function typeClause() {
+  const types = [...document.querySelectorAll('.checks input:checked')].map(c => `"${c.value}"[Publication Type]`);
+  if (types.length > 1) return `(${types.join(' OR ')})`;
+  return types[0] || '';
+}
+
+function generatedQuery() {
+  return [topicClause($('topic').value, $('mode').value), typeClause()].filter(Boolean).join(' AND ');
+}
+
+const dayMs = 86400000;
+const toDay = (y, m, d) => Math.floor(Date.UTC(y, m - 1, d) / dayMs);
+function dayLabel(day) {
+  const d = new Date(day * dayMs);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}/${pad(d.getUTCMonth() + 1)}/${pad(d.getUTCDate())}`;
+}
+const dated = (base, a, b) => `(${base}) AND ${dayLabel(a)}:${dayLabel(b)}[Date - Publication]`;
+
+function searchSpec() {
+  const from = parseInt($('from').value, 10), to = parseInt($('to').value, 10);
+  const base = $('query').value.trim();
+  if (!base) return { error: 'Enter a topic to search for.' };
+  if (!from || !to) return { error: 'Enter both publication years.' };
+  if (from > to) return { error: 'The first year needs to be before the last year.' };
+  return { base, from, to, a: toDay(from, 1, 1), b: toDay(to, 12, 31) };
+}
+
+/* ---------- NCBI requests ---------- */
+
+const sleep = (ms, signal) => new Promise((resolve, reject) => {
+  if (signal?.aborted) return reject(new DOMException('Stopped', 'AbortError'));
+  const t = setTimeout(resolve, ms);
+  signal?.addEventListener('abort', () => { clearTimeout(t); reject(new DOMException('Stopped', 'AbortError')); }, { once: true });
+});
+
+let nextSlot = 0;
+async function throttle(signal) {
+  const gap = $('apiKey').value.trim() ? 110 : 350;
+  const now = Date.now(), at = Math.max(now, nextSlot);
+  nextSlot = at + gap;
+  if (at > now) await sleep(at - now, signal);
+}
+
+class FatalError extends Error {}
+
+async function request(endpoint, params, signal, parse) {
+  const body = new URLSearchParams({ db: 'pubmed', tool: TOOL, ...params });
+  const key = $('apiKey').value.trim();
+  if (key) body.set('api_key', key);
+  let last;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    await throttle(signal);
+    try {
+      const res = await fetch(EUTILS + endpoint, { method: 'POST', body, signal });
+      const text = await res.text();
+      if (res.status === 400 || res.status === 403) {
+        throw new FatalError(/api key/i.test(text) ? 'NCBI rejected the API key. Check it, or clear the field.' : `PubMed refused the request (${res.status}).`);
+      }
+      if (!res.ok) throw new Error(`PubMed returned ${res.status}`);
+      return parse(text);
+    } catch (e) {
+      if (e.name === 'AbortError' || e instanceof FatalError) throw e;
+      last = e;
+    }
+    await sleep(1000 * 2 ** attempt, signal);
+  }
+  throw new Error(`PubMed did not respond after ${MAX_ATTEMPTS} tries (${last?.message || 'network error'}).`);
+}
+
+function parseSearch(text) {
+  const d = JSON.parse(text);
+  if (d.error) throw new Error(d.error);                     // usually the rate limit; retried
+  const r = d.esearchresult;
+  if (!r) throw new Error('Unexpected reply from PubMed');
+  if (r.ERROR) throw new FatalError(`PubMed could not run this query: ${r.ERROR}`);
+  return { count: parseInt(r.count, 10), ids: r.idlist || [] };
+}
+
+const search = (term, retmax, signal) => request('esearch.fcgi', { term, retmax, retmode: 'json' }, signal, parseSearch);
+
+/* Collect IDs for a date range, halving the range until each piece fits PubMed's limit.
+   Papers with separate print and online dates can land in two pieces, so IDs go in a Set. */
+async function collectIds(base, a, b, ids, onStep, signal) {
+  const { count } = await search(dated(base, a, b), 0, signal);
+  if (!count) return;
+  if (count <= MAX_IDS || a === b) {
+    const r = await search(dated(base, a, b), MAX_IDS, signal);
+    r.ids.forEach(id => ids.add(id));
+    onStep();
+    return;
+  }
+  const mid = Math.floor((a + b) / 2);
+  await collectIds(base, a, mid, ids, onStep, signal);
+  await collectIds(base, mid + 1, b, ids, onStep, signal);
+}
+
+/* ---------- Parsing PubMed XML ---------- */
+
+const txt = (el, sel) => el?.querySelector(sel)?.textContent.trim() || '';
+const kids = (el, sel) => el ? [...el.querySelectorAll(sel)] : [];
+
+function authorsOf(list) {
+  return kids(list, ':scope > Author')
+    .filter(a => a.getAttribute('ValidYN') !== 'N')
+    .map(a => txt(a, 'CollectiveName') || [txt(a, 'LastName'), txt(a, 'Initials')].filter(Boolean).join(' '))
+    .filter(Boolean);
+}
+
+function abstractOf(el) {
+  return kids(el, ':scope > Abstract > AbstractText').map(p => {
+    const label = p.getAttribute('Label');
+    return (label ? `${label}: ` : '') + p.textContent.trim();
+  }).join('\n');
+}
+
+function yearOf(dateEl) {
+  const m = (txt(dateEl, 'Year') || txt(dateEl, 'MedlineDate')).match(/\d{4}/);
+  return m ? parseInt(m[0], 10) : null;
+}
+
+function parseArticle(node) {
+  const art = node.querySelector(':scope > MedlineCitation > Article');
+  const journal = art?.querySelector(':scope > Journal');
+  const issue = journal?.querySelector(':scope > JournalIssue');
+  const doi = txt(node, ':scope > PubmedData > ArticleIdList > ArticleId[IdType="doi"]')
+    || txt(art, ':scope > ELocationID[EIdType="doi"]');
+  return {
+    pmid: txt(node, ':scope > MedlineCitation > PMID'),
+    title: txt(art, ':scope > ArticleTitle') || txt(art, ':scope > VernacularTitle'),
+    authors: authorsOf(art?.querySelector(':scope > AuthorList')),
+    year: yearOf(issue?.querySelector(':scope > PubDate')) ?? yearOf(art?.querySelector(':scope > ArticleDate')),
+    journal: txt(journal, ':scope > Title'),
+    volume: txt(issue, ':scope > Volume'),
+    issue: txt(issue, ':scope > Issue'),
+    pages: txt(art, ':scope > Pagination > MedlinePgn'),
+    doi,
+    types: kids(art, ':scope > PublicationTypeList > PublicationType').map(t => t.textContent.trim()),
+    abstract: abstractOf(art),
+  };
+}
+
+function parseBook(node) {
+  const doc = node.querySelector(':scope > BookDocument');
+  const book = doc?.querySelector(':scope > Book');
+  return {
+    book: true,
+    pmid: txt(doc, ':scope > PMID'),
+    title: txt(doc, ':scope > ArticleTitle') || txt(book, ':scope > BookTitle'),
+    authors: authorsOf(doc?.querySelector(':scope > AuthorList') || book?.querySelector(':scope > AuthorList')),
+    year: yearOf(book?.querySelector(':scope > PubDate')),
+    journal: txt(book, ':scope > BookTitle') || txt(book, 'PublisherName'),
+    volume: '', issue: '', pages: '',
+    doi: txt(doc, ':scope > ArticleIdList > ArticleId[IdType="doi"]'),
+    types: kids(doc, ':scope > PublicationType').map(t => t.textContent.trim()),
+    abstract: abstractOf(doc),
+  };
+}
+
+function parseRecords(xml) {
+  const doc = new DOMParser().parseFromString(xml, 'application/xml');
+  if (doc.querySelector('parsererror')) throw new Error('Incomplete reply from PubMed');
+  return [...doc.documentElement.children].flatMap(n =>
+    n.localName === 'PubmedArticle' ? [parseArticle(n)] :
+    n.localName === 'PubmedBookArticle' ? [parseBook(n)] : []);
+}
+
+const fetchRecords = (ids, signal) => request('efetch.fcgi', { id: ids.join(','), retmode: 'xml' }, signal, parseRecords);
+
+/* ---------- Live match count ---------- */
+
+let countCtl = null, countTimer = null;
+
+function refreshPreview() {
+  const spec = searchSpec();
+  $('dateNote').textContent = spec.error ? '' : `Adds ${spec.from}–${spec.to} by publication date`;
+  $('pubmedLink').href = spec.error ? 'https://pubmed.ncbi.nlm.nih.gov/'
+    : 'https://pubmed.ncbi.nlm.nih.gov/?term=' + encodeURIComponent(dated(spec.base, spec.a, spec.b));
+  clearTimeout(countTimer);
+  countCtl?.abort();
+  if (spec.error) { $('countLine').textContent = spec.error; return; }
+  $('countLine').textContent = 'Counting matches…';
+  countTimer = setTimeout(async () => {
+    const ctl = countCtl = new AbortController();
+    try {
+      const { count } = await search(dated(spec.base, spec.a, spec.b), 0, ctl.signal);
+      showCount(count);
+    } catch (e) {
+      if (e.name !== 'AbortError') $('countLine').textContent = e.message;
+    }
+  }, 500);
+}
+
+function showCount(count) {
+  const line = $('countLine');
+  line.textContent = '';
+  const strong = document.createElement('strong');
+  strong.textContent = count.toLocaleString();
+  line.append(strong, ` matching ${count === 1 ? 'record' : 'records'}`);
+  const minutes = Math.ceil(count / BATCH * 1.3 / 60);
+  if (count > 2000) line.append(`, about ${minutes} min to collect`);
+}
+
+/* ---------- Collecting ---------- */
+
+let records = [], running = null, shown = PAGE, runLabel = '', runExpected = 0;
+
+function setProgress(text, value) {
+  $('progressText').textContent = text;
+  $('bar').value = value;
+}
+
+function setBusy(busy) {
+  $('go').disabled = busy;
+  $('stop').hidden = !busy;
+  $('progress').hidden = !busy;
+  document.querySelectorAll('#form input, #form select, #form textarea').forEach(el => { el.disabled = busy; });
+}
+
+function notify(msg) {
+  $('notice').textContent = msg || '';
+  $('notice').hidden = !msg;
+}
+
+async function collect() {
+  const spec = searchSpec();
+  if (spec.error) { notify(spec.error); return; }
+  clearTimeout(countTimer);
+  countCtl?.abort();
+  notify('');
+  records = []; shown = PAGE; $('filter').value = '';
+  runLabel = `${$('topic').value.trim() || 'pubmed'}_${spec.from}-${spec.to}`;
+  $('results').hidden = true;
+  setBusy(true);
+  const ctl = running = new AbortController();
+  const ids = new Set();
+  let total = 0;
+  try {
+    setProgress('Searching PubMed…', 0);
+    total = (await search(dated(spec.base, spec.a, spec.b), 0, ctl.signal)).count;
+    runExpected = total;
+    showCount(total);
+    if (total) {
+      await collectIds(spec.base, spec.a, spec.b, ids, () => {
+        setProgress(`Finding records: ${ids.size.toLocaleString()} of ${total.toLocaleString()}`, Math.min(ids.size / total, 1) * .05);
+      }, ctl.signal);
+    }
+    const list = [...ids];
+    for (let i = 0; i < list.length; i += BATCH) {
+      records.push(...await fetchRecords(list.slice(i, i + BATCH), ctl.signal));
+      setProgress(`Downloading details: ${records.length.toLocaleString()} of ${list.length.toLocaleString()}`, .05 + .95 * records.length / list.length);
+    }
+    if (records.length < total) {
+      notify(`PubMed reports ${total.toLocaleString()} matches, but ${records.length.toLocaleString()} could be retrieved. Narrowing the years or the query should recover the rest.`);
+    }
+  } catch (e) {
+    const got = `${records.length.toLocaleString()} of ${total.toLocaleString()} records`;
+    notify(e.name === 'AbortError' ? `Stopped with ${got} collected.` : `${e.message} Kept ${got}.`);
+  }
+  running = null;
+  setBusy(false);
+  render();
+}
+
+/* ---------- Results ---------- */
+
+const hay = new WeakMap();
+function searchText(r) {
+  if (!hay.has(r)) hay.set(r, [r.title, r.authors.join(' '), r.journal, r.abstract, r.pmid].join(' ').toLowerCase());
+  return hay.get(r);
+}
+
+function visibleRecords() {
+  const q = $('filter').value.trim().toLowerCase();
+  const rows = q ? records.filter(r => searchText(r).includes(q)) : records.slice();
+  const by = $('sort').value;
+  const yr = r => r.year ?? 0;
+  if (by === 'new') rows.sort((a, b) => yr(b) - yr(a));
+  if (by === 'old') rows.sort((a, b) => (a.year ?? 9999) - (b.year ?? 9999));
+  if (by === 'journal') rows.sort((a, b) => a.journal.localeCompare(b.journal) || yr(b) - yr(a));
+  return rows;
+}
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+function shortAuthors(a) {
+  if (!a.length) return 'No authors listed';
+  return a.length > 3 ? `${a.slice(0, 3).join(', ')} et al.` : a.join(', ');
+}
+
+function citation(r) {
+  const parts = [r.volume && (r.issue ? `${r.volume}(${r.issue})` : r.volume), r.pages].filter(Boolean);
+  return parts.length ? ` ${parts.join(':')}` : '';
+}
+
+function recordRow(r) {
+  const li = el('li');
+  li.append(el('span', 'yr', r.year ?? '—'));
+  const body = el('div', 'rec');
+  const ttl = el('div', 'ttl');
+  const link = el('a', '', r.title || '(No title)');
+  link.href = `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/`;
+  link.target = '_blank'; link.rel = 'noopener';
+  ttl.append(link);
+  const meta = el('div', 'meta', `${shortAuthors(r.authors).replace(/\.$/, '')}. `);
+  meta.append(el('i', '', r.journal), citation(r));
+  const chips = el('div', 'chips');
+  r.types.filter(t => /review|meta-analysis/i.test(t)).forEach(t => chips.append(el('span', 'chip', t)));
+  chips.append(el('span', 'pmid', `PMID ${r.pmid}`));
+  body.append(ttl, meta, chips);
+  if (r.abstract) {
+    const d = el('details');
+    d.append(el('summary', '', 'Abstract'), el('p', '', r.abstract));
+    body.append(d);
+  }
+  li.append(body);
+  return li;
+}
+
+function render() {
+  if (!records.length && !runExpected) {
+    if (!$('notice').textContent) notify('No records match this search. Try a broader way of matching the topic.');
+    return;
+  }
+  if (!records.length) return;
+  const rows = visibleRecords();
+  $('results').hidden = false;
+  const noun = n => `${n.toLocaleString()} ${n === 1 ? 'record' : 'records'}`;
+  $('resultTitle').textContent = rows.length === records.length ? noun(records.length) : `${rows.length.toLocaleString()} of ${noun(records.length)}`;
+  $('list').replaceChildren(...rows.slice(0, shown).map(recordRow));
+  $('more').hidden = rows.length <= shown;
+}
+
+/* ---------- Export ---------- */
+
+function save(text, type, ext) {
+  const name = runLabel.toLowerCase().replace(/[^a-z0-9_-]+/g, '-');
+  const a = el('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = `pubmed_${name}.${ext}`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
+function csvCell(value) {
+  let s = String(value ?? '');
+  if (/^[=+\-@]/.test(s)) s = `'${s}`;   // stop spreadsheets reading text as a formula
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+function toCsv(rows) {
+  const head = ['PMID', 'Title', 'Authors', 'Year', 'Journal', 'Volume', 'Issue', 'Pages', 'DOI', 'Publication types', 'Abstract', 'PubMed URL'];
+  const lines = rows.map(r => [r.pmid, r.title, r.authors.join('; '), r.year, r.journal, r.volume, r.issue, r.pages, r.doi,
+    r.types.join('; '), r.abstract, `https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/`].map(csvCell).join(','));
+  return '﻿' + [head.map(csvCell).join(','), ...lines].join('\r\n');
+}
+
+function toRis(rows) {
+  const flat = s => String(s).replace(/\s+/g, ' ').trim();
+  return rows.map(r => {
+    const out = [`TY  - ${r.book ? 'CHAP' : 'JOUR'}`, `TI  - ${flat(r.title)}`];
+    r.authors.forEach(a => out.push(`AU  - ${flat(a)}`));
+    if (r.year) out.push(`PY  - ${r.year}`);
+    if (r.journal) out.push(`JO  - ${flat(r.journal)}`);
+    if (r.volume) out.push(`VL  - ${flat(r.volume)}`);
+    if (r.issue) out.push(`IS  - ${flat(r.issue)}`);
+    if (r.pages) out.push(`SP  - ${flat(r.pages)}`);
+    if (r.doi) out.push(`DO  - ${flat(r.doi)}`);
+    if (r.abstract) out.push(`AB  - ${flat(r.abstract)}`);
+    out.push(`AN  - ${r.pmid}`, `UR  - https://pubmed.ncbi.nlm.nih.gov/${r.pmid}/`, 'ER  - ');
+    return out.join('\r\n');
+  }).join('\r\n\r\n') + '\r\n';
+}
+
+/* ---------- Wiring ---------- */
+
+let queryEdited = false;
+
+function syncQuery() {
+  if (!queryEdited) $('query').value = generatedQuery();
+  refreshPreview();
+}
+
+['topic', 'mode', 'from', 'to'].forEach(id => $(id).addEventListener('input', syncQuery));
+document.querySelectorAll('.checks input').forEach(c => c.addEventListener('change', syncQuery));
+$('query').addEventListener('input', () => {
+  queryEdited = true;
+  $('resetQuery').hidden = false;
+  refreshPreview();
+});
+$('resetQuery').addEventListener('click', () => {
+  queryEdited = false;
+  $('resetQuery').hidden = true;
+  syncQuery();
+});
+$('form').addEventListener('submit', e => { e.preventDefault(); if (!running) collect(); });
+$('stop').addEventListener('click', () => running?.abort());
+$('filter').addEventListener('input', () => { shown = PAGE; render(); });
+$('sort').addEventListener('change', () => { shown = PAGE; render(); });
+$('more').addEventListener('click', () => { shown += PAGE; render(); });
+$('csv').addEventListener('click', () => save(toCsv(visibleRecords()), 'text/csv;charset=utf-8', 'csv'));
+$('ris').addEventListener('click', () => save(toRis(visibleRecords()), 'application/x-research-info-systems', 'ris'));
+$('apiKey').value = store.get('ncbi-key');
+$('apiKey').addEventListener('change', () => store.set('ncbi-key', $('apiKey').value.trim()));
+
+syncQuery();
+</script>
+</body>
+</html>
