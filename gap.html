@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PubMed Gap Map</title>
+<meta name="description" content="Cross mechanisms with species comparisons, count the primary studies in PubMed for each pair, and find the combinations nobody has studied.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,500;6..72,600&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="site.css">
+<style>
+/* Gap map: a mechanism-by-comparison grid. Warm cells have fewer studies than expected; cool cells more. */
+:root { --gap: #f0a43a; --rich: #6dbac2; --cellfg: #15282e; }
+@media (prefers-color-scheme: dark) { :root { --gap: #c4761f; --rich: #2f8e98; --cellfg: #f1f7f8; } }
+main { max-width: 1180px; }
+.config { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; }
+.config textarea { min-height: 220px; white-space: pre; overflow-x: auto; }
+.config .wide { grid-column: 1 / -1; }
+.config .wide textarea { min-height: 66px; white-space: pre-wrap; }
+.opts { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: end; }
+.opts .field { flex: 0 1 260px; }
+.opts label.inline { display: flex; gap: 8px; align-items: baseline; font-weight: 400; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; font-size: .88rem; color: var(--muted); }
+.swatch { display: inline-block; width: 14px; height: 14px; border-radius: 2px; vertical-align: -2px; margin-right: 6px; border: 1px solid var(--line); }
+.views { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.views button { font: inherit; font-size: .88rem; background: transparent; color: var(--fg); border: 0; padding: 5px 11px; cursor: pointer; }
+.views button[aria-pressed="true"] { background: var(--accent); color: var(--accent-fg); }
+
+.matrix-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+table.matrix { border-collapse: separate; border-spacing: 0; font-variant-numeric: tabular-nums; min-width: 100%; }
+.matrix th, .matrix td { border-bottom: 1px solid var(--line); padding: 0; }
+.matrix thead th { position: sticky; top: 0; background: var(--panel); z-index: 2; vertical-align: bottom; padding: 10px 8px; text-align: center; min-width: 104px; max-width: 150px; font-weight: 600; font-size: .82rem; line-height: 1.25; }
+.matrix th[scope=row] { position: sticky; left: 0; background: var(--panel); z-index: 1; text-align: left; padding: 6px 12px; font-weight: 600; font-size: .9rem; min-width: 200px; max-width: 240px; border-right: 1px solid var(--line); }
+.matrix thead th.corner { left: 0; z-index: 3; text-align: left; color: var(--muted); font-weight: 400; border-right: 1px solid var(--line); }
+.tot { display: block; font: 400 .74rem var(--mono); color: var(--muted); margin-top: 3px; }
+.cell { width: 100%; min-height: 48px; border: 0; border-left: 1px solid var(--bg); background: var(--panel); color: var(--cellfg); font: inherit; cursor: pointer; display: grid; place-content: center; gap: 1px; padding: 6px 4px; }
+.cell:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.cell .o { font: 600 1.05rem var(--display); }
+.cell .e { font: 400 .7rem var(--mono); opacity: .8; }
+.cell .flag { font: 600 .62rem var(--body); letter-spacing: .06em; text-transform: uppercase; }
+.cell.pending .o { color: var(--muted); font-weight: 400; }
+.cell[aria-current="true"] { outline: 3px solid var(--fg); outline-offset: -3px; }
+
+.gaps { display: grid; gap: 10px; }
+.gaps h2, #detail h2 { font: 600 1.4rem var(--display); margin: 0; }
+ol.gaplist { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--line); }
+ol.gaplist li { border-bottom: 1px solid var(--line); }
+ol.gaplist button { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: grid; grid-template-columns: 2.2rem minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 10px 4px; }
+ol.gaplist button:hover .gl-t, ol.gaplist button:focus-visible .gl-t { color: var(--accent); text-decoration: underline; }
+ol.gaplist button:focus-visible { outline: 2px solid var(--accent); }
+.gl-n { font: 500 .85rem var(--mono); color: var(--muted); }
+.gl-t { font: 500 1.02rem var(--display); }
+.gl-c { font: 400 .85rem var(--mono); color: var(--muted); white-space: nowrap; }
+
+#detail { display: grid; gap: 12px; min-width: 0; border-top: 2px solid var(--fg); padding-top: 16px; }
+#detail .q { font: 400 .78rem/1.5 var(--mono); color: var(--muted); overflow-wrap: anywhere; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px; }
+.explain { max-width: 75ch; display: grid; gap: 6px; }
+.explain p { margin: 0; }
+@media (max-width: 760px) {
+  .config { grid-template-columns: 1fr; }
+  .matrix th[scope=row] { min-width: 150px; }
+  ol.gaplist button { grid-template-columns: 1.8rem minmax(0, 1fr); }
+  .gl-c { grid-column: 2; white-space: normal; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <nav class="site-nav"><a href="./">Review list</a><a href="gap.html" aria-current="page">Gap map</a></nav>
+    <h1>PubMed Gap Map</h1>
+    <p>Cross a list of mechanisms with a list of species comparisons. For every pair, the map counts primary studies in PubMed and compares that with how many you would expect from how popular each side is. Pairs far below expectation are candidate gaps.</p>
+  </header>
+
+  <form id="form" novalidate>
+    <div class="row">
+      <div class="field">
+        <label for="template">Starting template</label>
+        <select id="template">
+          <option value="evolution">Human brain evolution</option>
+          <option value="nonmodel">Non-model organisms and neuroprotection</option>
+        </select>
+        <span class="hint" id="templateHint"></span>
+      </div>
+    </div>
+    <div class="config">
+      <div class="field">
+        <label for="rows">Mechanisms (rows)</label>
+        <textarea id="rows" spellcheck="false"></textarea>
+        <span class="hint">One per line as <code>Label = PubMed query</code>. A line with no <code>=</code> searches that phrase in titles and abstracts.</span>
+      </div>
+      <div class="field">
+        <label for="cols">Comparisons (columns)</label>
+        <textarea id="cols" spellcheck="false"></textarea>
+        <span class="hint">Same format. Each column is the set of papers that mention both species, or the organism named.</span>
+      </div>
+      <div class="field wide">
+        <label for="context">Context applied to every count</label>
+        <textarea id="context" rows="2" spellcheck="false"></textarea>
+        <span class="hint">Keeps the counts inside your field, for example to neural papers. Leave empty to count across all of PubMed.</span>
+      </div>
+    </div>
+    <div class="opts">
+      <div class="field">
+        <label for="from">Publication years</label>
+        <div class="years">
+          <input type="number" id="from" min="1700" max="2100" aria-label="From year">
+          <span>to</span>
+          <input type="number" id="to" min="1700" max="2100" aria-label="To year">
+        </div>
+      </div>
+      <label class="inline"><input type="checkbox" id="primary" checked> Primary studies only (leave out reviews, meta-analyses, editorials and comments)</label>
+    </div>
+    <details class="settings">
+      <summary>Faster maps with an NCBI API key</summary>
+      <div class="field">
+        <label for="apiKey">NCBI API key (optional)</label>
+        <input type="password" id="apiKey" autocomplete="off">
+        <span class="hint">Raises the limit from 3 to 10 searches per second, so maps build about three times faster. It stays in this browser and is only sent to NCBI.</span>
+      </div>
+    </details>
+    <div class="actions">
+      <button type="submit" class="btn primary" id="go">Build gap map</button>
+      <button type="button" class="btn quiet" id="stop" hidden>Stop</button>
+      <span id="estimate" class="hint" aria-live="polite"></span>
+    </div>
+  </form>
+
+  <section id="progress" hidden aria-live="polite">
+    <div id="progressText"></div>
+    <progress id="bar" max="1" value="0"></progress>
+  </section>
+
+  <div class="notice" id="notice" hidden role="status"></div>
+
+  <section id="mapSection" class="gaps">
+    <div class="bar">
+      <h2 id="mapTitle">Map</h2>
+      <div class="actions">
+        <span class="views" role="group" aria-label="Shade cells by">
+          <button type="button" id="viewRatio" aria-pressed="true">Below expected</button>
+          <button type="button" id="viewCount" aria-pressed="false">Number of studies</button>
+        </span>
+        <button type="button" class="btn quiet" id="exportMap" disabled>Download map (CSV)</button>
+        <button type="button" class="btn quiet" id="share">Copy link to this map</button>
+      </div>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="matrix-wrap"><table class="matrix" id="matrix"></table></div>
+  </section>
+
+  <section class="gaps" id="gapSection" hidden>
+    <h2>Most under-studied pairs</h2>
+    <p class="hint">Ranked by how far each pair falls below expectation, among pairs where at least 2 studies would be expected. Click one to see what has been published.</p>
+    <ol class="gaplist" id="gapList"></ol>
+  </section>
+
+  <section id="detail" hidden aria-live="polite">
+    <div class="bar">
+      <h2 id="detailTitle"></h2>
+      <div class="actions">
+        <a class="btn quiet" id="detailPubmed" target="_blank" rel="noopener">Open on PubMed</a>
+        <button type="button" class="btn quiet" id="detailCsv" disabled>Download these abstracts (CSV)</button>
+      </div>
+    </div>
+    <p id="detailSummary"></p>
+    <div class="q" id="detailQuery"></div>
+    <div id="detailStatus" class="hint"></div>
+    <ol class="records" id="detailList"></ol>
+  </section>
+
+  <footer class="explain">
+    <p><strong>How expectation works.</strong> If a mechanism appears in R papers, a comparison in C papers, and the field as a whole has N papers, then R × C ÷ N studies would mention both by chance. A pair with 1 study where 6 are expected is a much stronger gap signal than a pair with 1 study where 0.3 are expected.</p>
+    <p><strong>Read before you trust a gap.</strong> Counts come from words in titles and abstracts. A paper that mentions both species has not necessarily compared them, and a comparison buried in a figure may not be mentioned at all. Download the abstracts for a promising cell and check them. Preprints on bioRxiv are not in PubMed.</p>
+  </footer>
+</main>
+
+<script src="pubmed.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+useApiKey(() => $('apiKey').value.trim());
+
+/* ---------- Templates ---------- */
+
+const HUMAN = '(human[tiab] OR humans[tiab])';
+const APES = '(chimpanzee*[tiab] OR bonobo*[tiab] OR gorilla*[tiab] OR orangutan*[tiab] OR "great ape*"[tiab])';
+
+const TEMPLATES = {
+  evolution: {
+    hint: 'Where human neurons have, and have not, been compared with other species.',
+    from: 1960, to: 2026,
+    context: '(neuron*[tiab] OR neural[tiab] OR brain[tiab] OR cortex[tiab] OR cortical[tiab] OR synap*[tiab] OR organoid*[tiab])',
+    cols: [
+      `Human vs great apes = ${HUMAN} AND ${APES}`,
+      `Human vs ape stem-cell neurons and organoids = ("induced pluripotent"[tiab] OR iPSC*[tiab] OR organoid*[tiab]) AND ${APES}`,
+      `Human vs monkeys = ${HUMAN} AND (macaque*[tiab] OR monkey*[tiab] OR marmoset*[tiab] OR Macaca[tiab])`,
+      `Human vs rodents = ${HUMAN} AND (mouse[tiab] OR mice[tiab] OR rat[tiab] OR rats[tiab] OR rodent*[tiab])`,
+      'Human-specific evolution = ("human-specific"[tiab] OR "human accelerated"[tiab] OR hominin*[tiab] OR "human evolution"[tiab] OR "human lineage"[tiab])',
+    ],
+    rows: [
+      'Voltage-gated calcium channels = ("calcium channel*"[tiab] OR "calcium current*"[tiab] OR "Ca2+ channel*"[tiab] OR "Ca2+ current*"[tiab] OR CACNA1*[tiab])',
+      'Store-operated calcium entry = ("store-operated"[tiab] OR STIM1[tiab] OR STIM2[tiab] OR ORAI1[tiab] OR Orai*[tiab] OR "calcium release-activated"[tiab])',
+      'ER calcium release = ("ryanodine receptor*"[tiab] OR "IP3 receptor*"[tiab] OR "inositol trisphosphate receptor*"[tiab] OR ITPR1[tiab] OR "endoplasmic reticulum calcium"[tiab])',
+      'Mitochondrial calcium = ("mitochondrial calcium"[tiab] OR "mitochondrial Ca2+"[tiab] OR "calcium uniporter"[tiab] OR MCU[tiab])',
+      'Calcium-binding proteins = (calbindin[tiab] OR calretinin[tiab] OR "calcium buffer*"[tiab] OR "calcium-binding protein*"[tiab])',
+      'Sodium channels = ("sodium channel*"[tiab] OR "sodium current*"[tiab] OR "Na+ current*"[tiab] OR SCN1A[tiab] OR SCN2A[tiab] OR SCN8A[tiab] OR Nav1*[tiab])',
+      'Potassium channels = ("potassium channel*"[tiab] OR "potassium current*"[tiab] OR "K+ current*"[tiab] OR KCNQ*[tiab] OR Kv1*[tiab] OR Kv2*[tiab] OR Kv3*[tiab] OR Kv4*[tiab])',
+      'HCN channels = (HCN1[tiab] OR HCN2[tiab] OR "h-current"[tiab] OR "hyperpolarization-activated"[tiab])',
+      'Axon initial segment = ("axon initial segment*"[tiab] OR "ankyrin-G"[tiab] OR ANK3[tiab])',
+      'Dendritic excitability = ("dendritic integration"[tiab] OR "dendritic excitability"[tiab] OR "dendritic spike*"[tiab] OR "backpropagating action potential*"[tiab] OR "back-propagating action potential*"[tiab])',
+      'Endocytosis and vesicle recycling = (endocytosis[tiab] OR endocytic[tiab] OR "vesicle recycling"[tiab] OR dynamin*[tiab] OR clathrin[tiab])',
+      'Transmitter release = ("neurotransmitter release"[tiab] OR "release probability"[tiab] OR exocytosis[tiab] OR synaptotagmin*[tiab] OR SNARE*[tiab])',
+      'Short-term synaptic plasticity = ("short-term plasticity"[tiab] OR "paired-pulse"[tiab] OR "synaptic depression"[tiab] OR "synaptic facilitation"[tiab])',
+      'Long-term synaptic plasticity = ("long-term potentiation"[tiab] OR "long-term depression"[tiab])',
+      'Glutamate receptors = (NMDA*[tiab] OR AMPA*[tiab] OR "glutamate receptor*"[tiab] OR GRIN2B[tiab])',
+      'Inhibitory interneurons = (interneuron*[tiab] OR GABAergic[tiab])',
+      'Dendritic spines = ("dendritic spine*"[tiab] OR "spine density"[tiab])',
+      'Synapse maturation timing = ("synaptic maturation"[tiab] OR "synapse maturation"[tiab] OR neoteny[tiab] OR "developmental timing"[tiab] OR "maturation rate"[tiab])',
+      'Axon and neurite growth = ("axon growth"[tiab] OR "axon outgrowth"[tiab] OR "axonal branching"[tiab] OR "neurite outgrowth"[tiab])',
+      'Neuronal migration = ("neuronal migration"[tiab] OR "radial migration"[tiab])',
+      'Neural progenitors = ("radial glia*"[tiab] OR "neural progenitor*"[tiab] OR "basal progenitor*"[tiab])',
+      'Neuronal energy metabolism = (glycolysis[tiab] OR glycolytic[tiab] OR "oxidative phosphorylation"[tiab] OR "energy metabolism"[tiab])',
+      'Mitochondrial dynamics = ("mitochondrial dynamics"[tiab] OR "mitochondrial fission"[tiab] OR "mitochondrial fusion"[tiab] OR "mitochondrial biogenesis"[tiab])',
+      'Protein turnover and autophagy = (autophagy[tiab] OR proteasom*[tiab] OR "protein turnover"[tiab] OR proteostasis[tiab])',
+      'Myelination = (myelin*[tiab] OR oligodendrocyte*[tiab])',
+      'Astrocytes = (astrocyte*[tiab] OR astroglia*[tiab])',
+      'Microglia = (microglia*[tiab])',
+    ],
+  },
+  nonmodel: {
+    hint: 'Protective mechanisms known in other animals, against how much they have been tested in mammalian disease models (last column).',
+    from: 1960, to: 2026,
+    context: '(neuron*[tiab] OR neural[tiab] OR brain[tiab] OR "nervous system"[tiab] OR axon*[tiab] OR "spinal cord"[tiab] OR glia*[tiab])',
+    cols: [
+      'Cephalopods = (cephalopod*[tiab] OR octopus*[tiab] OR squid*[tiab] OR cuttlefish[tiab])',
+      'Salamanders and axolotl = (axolotl*[tiab] OR salamander*[tiab] OR newt*[tiab] OR Ambystoma[tiab] OR urodel*[tiab])',
+      'Zebrafish = (zebrafish[tiab] OR "Danio rerio"[tiab])',
+      'Planarians = (planaria*[tiab] OR planarian*[tiab] OR Schmidtea[tiab])',
+      'Hibernators = (hibernat*[tiab] OR torpor[tiab] OR "ground squirrel*"[tiab])',
+      'Naked mole-rat = ("naked mole-rat*"[tiab] OR "naked mole rat*"[tiab] OR Heterocephalus[tiab])',
+      'Bats = (bats[tiab] OR Chiroptera[tiab] OR Myotis[tiab])',
+      'Anoxia-tolerant turtles = (turtle*[tiab] OR Chrysemys[tiab] OR Trachemys[tiab])',
+      'Killifish = (killifish[tiab] OR Nothobranchius[tiab])',
+      'Tardigrades = (tardigrade*[tiab])',
+      'Mammalian disease models = (mouse[tiab] OR mice[tiab] OR rat[tiab] OR rats[tiab]) AND (neurodegenerat*[tiab] OR Alzheimer*[tiab] OR Parkinson*[tiab] OR "amyotrophic lateral sclerosis"[tiab] OR Huntington*[tiab] OR "spinal cord injury"[tiab] OR stroke[tiab])',
+    ],
+    rows: [
+      'RNA editing = ("RNA editing"[tiab] OR ADAR*[tiab] OR "A-to-I"[tiab])',
+      'RNA stability and decay = ("mRNA stability"[tiab] OR "RNA stability"[tiab] OR "mRNA decay"[tiab] OR "RNA decay"[tiab] OR "nonsense-mediated"[tiab])',
+      'Cold-shock proteins = (RBM3[tiab] OR CIRBP[tiab] OR "cold-shock protein*"[tiab] OR "cold shock protein*"[tiab] OR "cold-inducible"[tiab])',
+      'Anoxia and hypoxia tolerance = (anoxia[tiab] OR anoxic[tiab] OR "hypoxia tolerance"[tiab] OR "hypoxia-tolerant"[tiab] OR "hypoxic tolerance"[tiab])',
+      'Oxidative stress defence = ("oxidative stress"[tiab] OR antioxidant*[tiab] OR "reactive oxygen species"[tiab])',
+      'Chaperones and protein aggregation = (chaperone*[tiab] OR "heat shock protein*"[tiab] OR "protein aggregation"[tiab] OR "protein misfolding"[tiab])',
+      'Autophagy and proteasome = (autophagy[tiab] OR proteasom*[tiab] OR proteostasis[tiab])',
+      'Axon regeneration = ("axon regeneration"[tiab] OR "axonal regeneration"[tiab] OR "nerve regeneration"[tiab])',
+      'Adult neurogenesis = ("adult neurogenesis"[tiab] OR "neural stem cell*"[tiab])',
+      'Glial response to injury = ("glial scar"[tiab] OR "reactive astrocyte*"[tiab] OR "reactive gliosis"[tiab])',
+      'Neuroinflammation = (microglia*[tiab] OR neuroinflammat*[tiab])',
+      'Remyelination = (remyelinat*[tiab] OR demyelinat*[tiab])',
+      'Synapse loss and regrowth = ("synapse loss"[tiab] OR "synaptic loss"[tiab] OR "synapse regeneration"[tiab] OR synaptogenesis[tiab])',
+      'Mitochondrial function = (mitochondri*[tiab])',
+      'DNA repair = ("DNA repair"[tiab] OR "DNA damage"[tiab])',
+      'Senescence and lifespan = (senescen*[tiab] OR longevity[tiab] OR lifespan[tiab] OR "life span"[tiab])',
+      'Excitotoxicity and channel arrest = (excitotoxic*[tiab] OR "channel arrest"[tiab] OR "glutamate toxicity"[tiab])',
+      'Extracellular matrix and hyaluronan = (hyaluron*[tiab] OR "extracellular matrix"[tiab] OR "perineuronal net*"[tiab])',
+      'Insulin, IGF and mTOR signalling = (insulin[tiab] OR IGF*[tiab] OR mTOR[tiab] OR FOXO*[tiab])',
+      'Lipid metabolism = ("lipid metabolism"[tiab] OR "fatty acid*"[tiab] OR cholesterol[tiab])',
+    ],
+  },
+};
+
+/* ---------- Configuration ---------- */
+
+function parseLines(text) {
+  return text.split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('#')).map(l => {
+    const i = l.indexOf(' = ');
+    return i > 0 ? { label: l.slice(0, i).trim(), query: l.slice(i + 3).trim() }
+                 : { label: l, query: `"${l.replace(/"/g, '')}"[tiab]` };
+  });
+}
+
+function readConfig() {
+  return {
+    template: $('template').value,
+    rows: $('rows').value, cols: $('cols').value, context: $('context').value,
+    from: parseInt($('from').value, 10), to: parseInt($('to').value, 10),
+    primary: $('primary').checked,
+  };
+}
+
+function applyConfig(c) {
+  if (TEMPLATES[c.template]) $('template').value = c.template;
+  $('rows').value = c.rows ?? ''; $('cols').value = c.cols ?? ''; $('context').value = c.context ?? '';
+  $('from').value = c.from ?? 1960; $('to').value = c.to ?? 2026;
+  $('primary').checked = c.primary !== false;
+  $('templateHint').textContent = TEMPLATES[c.template]?.hint || '';
+}
+
+function loadTemplate(key) {
+  const t = TEMPLATES[key];
+  applyConfig({ template: key, rows: t.rows.join('\n'), cols: t.cols.join('\n'), context: t.context, from: t.from, to: t.to, primary: true });
+}
+
+const EXCLUDED = '("review"[pt] OR "systematic review"[pt] OR "meta-analysis"[pt] OR "editorial"[pt] OR "comment"[pt])';
+
+function plan(c) {
+  const rows = parseLines(c.rows), cols = parseLines(c.cols);
+  if (!rows.length) return { error: 'Add at least one mechanism.' };
+  if (!cols.length) return { error: 'Add at least one comparison.' };
+  if (!c.from || !c.to) return { error: 'Enter both publication years.' };
+  if (c.from > c.to) return { error: 'The first year needs to be before the last year.' };
+  let universe = [c.context.trim() ? `(${c.context.trim()})` : 'all[sb]', `${c.from}/01/01:${c.to}/12/31[dp]`].join(' AND ');
+  if (c.primary) universe = `(${universe}) NOT ${EXCLUDED}`;
+  return {
+    rows, cols, universe, years: `${c.from}–${c.to}`,
+    rowTerm: i => `(${rows[i].query}) AND (${universe})`,
+    colTerm: j => `(${cols[j].query}) AND (${universe})`,
+    cellTerm: (i, j) => `(${rows[i].query}) AND (${cols[j].query}) AND (${universe})`,
+  };
+}
+
+/* Share a map as a link: the configuration rides in the URL hash. */
+function encodeConfig(c) {
+  const bytes = new TextEncoder().encode(JSON.stringify(c));
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function decodeConfig(s) {
+  try {
+    const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(bin, ch => ch.charCodeAt(0))));
+  } catch { return null; }
+}
+
+/* ---------- Counting ---------- */
+
+const counts = new Map();   // query → count, kept while the page is open
+let map = null, running = null, view = 'ratio', current = null;
+
+async function countOf(term, signal) {
+  if (counts.has(term)) return counts.get(term);
+  const { count } = await search(term, 0, signal);
+  counts.set(term, count);
+  return count;
+}
+
+const expected = (i, j) => map.N ? map.R[i] * map.C[j] / map.N : null;
+const MIN_EXPECTED = 2;
+const isGap = (o, e) => e != null && e >= MIN_EXPECTED && o <= e / 3;
+const fmtE = e => e >= 10 ? Math.round(e).toLocaleString() : e.toFixed(1);
+
+function estimate() {
+  const p = plan(readConfig());
+  if (p.error) { $('estimate').textContent = p.error; return; }
+  const n = 1 + p.rows.length + p.cols.length + p.rows.length * p.cols.length;
+  const todo = [p.universe, ...p.rows.map((_, i) => p.rowTerm(i)), ...p.cols.map((_, j) => p.colTerm(j))].filter(t => !counts.has(t)).length
+    + p.rows.reduce((s, _, i) => s + p.cols.filter((_, j) => !counts.has(p.cellTerm(i, j))).length, 0);
+  const secs = todo * ($('apiKey').value.trim() ? .2 : .45);
+  $('estimate').textContent = `${p.rows.length} × ${p.cols.length} map, ${n.toLocaleString()} PubMed searches` +
+    (todo ? `, about ${secs < 90 ? Math.max(5, Math.round(secs / 5) * 5) + ' seconds' : Math.round(secs / 60) + ' minutes'}` : ', all counted already');
+}
+
+function setBusy(busy) {
+  $('go').disabled = busy;
+  $('stop').hidden = !busy;
+  $('progress').hidden = !busy;
+  document.querySelectorAll('#form input, #form select, #form textarea').forEach(e => { e.disabled = busy; });
+}
+
+function notify(msg) {
+  $('notice').textContent = msg || '';
+  $('notice').hidden = !msg;
+}
+
+async function build() {
+  const p = plan(readConfig());
+  if (p.error) { notify(p.error); return; }
+  notify('');
+  map = { p, N: null, R: p.rows.map(() => null), C: p.cols.map(() => null), O: p.rows.map(() => p.cols.map(() => null)) };
+  current = null;
+  $('detail').hidden = true;
+  $('gapSection').hidden = true;
+  drawTable();
+  setBusy(true);
+  const ctl = running = new AbortController();
+  const total = 1 + p.rows.length + p.cols.length + p.rows.length * p.cols.length;
+  let done = 0;
+  const step = async term => {
+    const n = await countOf(term, ctl.signal);
+    done++;
+    $('progressText').textContent = `Counting studies: ${done.toLocaleString()} of ${total.toLocaleString()} searches`;
+    $('bar').value = done / total;
+    return n;
+  };
+  try {
+    map.N = await step(p.universe);
+    for (let j = 0; j < p.cols.length; j++) { map.C[j] = await step(p.colTerm(j)); drawTotals(); }
+    for (let i = 0; i < p.rows.length; i++) { map.R[i] = await step(p.rowTerm(i)); drawTotals(); }
+    for (let i = 0; i < p.rows.length; i++) {
+      for (let j = 0; j < p.cols.length; j++) { map.O[i][j] = await step(p.cellTerm(i, j)); drawCell(i, j); }
+    }
+  } catch (e) {
+    notify(e.name === 'AbortError' ? 'Stopped. Counts so far are shown, and finished searches are reused if you build again.' : e.message);
+  }
+  running = null;
+  setBusy(false);
+  estimate();
+  map.p.rows.forEach((_, i) => map.p.cols.forEach((_, j) => drawCell(i, j)));
+  drawGaps();
+}
+
+/* ---------- Drawing ---------- */
+
+function drawTable() {
+  const p = map.p;
+  const head = el('tr');
+  head.append(el('th', 'corner', 'Mechanism ↓  Comparison →'));
+  p.cols.forEach((c, j) => {
+    const th = el('th');
+    th.scope = 'col';
+    th.append(el('span', '', c.label), el('span', 'tot', ''));
+    th.dataset.j = j;
+    head.append(th);
+  });
+  const thead = el('thead'); thead.append(head);
+  const tbody = el('tbody');
+  p.rows.forEach((r, i) => {
+    const tr = el('tr');
+    const th = el('th');
+    th.scope = 'row';
+    th.append(el('span', '', r.label), el('span', 'tot', ''));
+    tr.append(th);
+    p.cols.forEach((_, j) => {
+      const td = el('td');
+      const b = el('button', 'cell pending');
+      b.type = 'button';
+      b.dataset.i = i; b.dataset.j = j;
+      b.append(el('span', 'o', '·'), el('span', 'e', ''), el('span', 'flag', ''));
+      b.setAttribute('aria-label', `${r.label}, ${p.cols[j].label}: not counted yet`);
+      td.append(b);
+      tr.append(td);
+    });
+    tbody.append(tr);
+  });
+  $('matrix').replaceChildren(thead, tbody);
+  $('mapTitle').textContent = `${p.rows.length} mechanisms × ${p.cols.length} comparisons, ${p.years}`;
+  drawLegend();
+  drawTotals();
+}
+
+function drawTotals() {
+  const studies = n => n == null ? '' : `${n.toLocaleString()} ${n === 1 ? 'study' : 'studies'}`;
+  document.querySelectorAll('#matrix thead th[data-j] .tot').forEach((s, j) => { s.textContent = studies(map.C[j]); });
+  document.querySelectorAll('#matrix tbody th .tot').forEach((s, i) => { s.textContent = studies(map.R[i]); });
+}
+
+function cellButton(i, j) { return $('matrix').querySelector(`.cell[data-i="${i}"][data-j="${j}"]`); }
+
+function maxObserved() {
+  return Math.max(1, ...map.O.flat().filter(o => o != null));
+}
+
+function shade(o, e) {
+  if (view === 'count') {
+    const pct = Math.round(70 * Math.log10(o + 1) / Math.log10(maxObserved() + 1));
+    return `color-mix(in srgb, var(--rich) ${pct}%, var(--panel))`;
+  }
+  if (e == null || e < 0.5 && o < 3) return '';
+  const lr = Math.log2((o + .5) / (e + .5));
+  const pct = lr < 0 ? Math.round(80 * Math.min(1, -lr / 4)) : Math.round(60 * Math.min(1, lr / 3));
+  return `color-mix(in srgb, var(${lr < 0 ? '--gap' : '--rich'}) ${pct}%, var(--panel))`;
+}
+
+function drawCell(i, j) {
+  const b = cellButton(i, j), o = map.O[i][j];
+  if (!b || o == null) return;
+  const e = expected(i, j);
+  b.classList.remove('pending');
+  b.querySelector('.o').textContent = o.toLocaleString();
+  b.querySelector('.e').textContent = e == null ? '' : `exp. ${fmtE(e)}`;
+  const gap = isGap(o, e);
+  b.querySelector('.flag').textContent = gap ? (o === 0 ? 'none' : 'gap') : '';
+  b.style.background = shade(o, e);
+  b.setAttribute('aria-label', `${map.p.rows[i].label}, ${map.p.cols[j].label}: ${o} studies, about ${e == null ? '?' : fmtE(e)} expected${gap ? ', under-studied' : ''}`);
+}
+
+function drawLegend() {
+  const sw = color => { const s = el('span', 'swatch'); s.style.background = color; return s; };
+  const items = view === 'ratio' ? [
+    [sw('color-mix(in srgb, var(--gap) 80%, var(--panel))'), 'Far fewer studies than expected'],
+    [sw('var(--panel)'), 'About as expected, or too few papers overall to judge'],
+    [sw('color-mix(in srgb, var(--rich) 60%, var(--panel))'), 'More studies than expected'],
+  ] : [
+    [sw('var(--panel)'), 'No studies'],
+    [sw('color-mix(in srgb, var(--rich) 70%, var(--panel))'), 'Most studies in this map'],
+  ];
+  $('legend').replaceChildren(...items.map(([s, t]) => { const span = el('span'); span.append(s, t); return span; }),
+    el('span', '', 'Each cell: studies found, and the number expected by chance (“exp.”).'));
+}
+
+function rankedGaps() {
+  const list = [];
+  map.O.forEach((row, i) => row.forEach((o, j) => {
+    const e = expected(i, j);
+    if (o != null && e != null && e >= MIN_EXPECTED && o < e) list.push({ i, j, o, e, score: Math.log2((e + .5) / (o + .5)) });
+  }));
+  return list.sort((a, b) => b.score - a.score || b.e - a.e);
+}
+
+function drawGaps() {
+  if (!map || map.N == null) return;
+  const list = rankedGaps().slice(0, 20);
+  $('gapSection').hidden = !list.length;
+  $('exportMap').disabled = false;
+  $('gapList').replaceChildren(...list.map((g, k) => {
+    const li = el('li');
+    const b = el('button');
+    b.type = 'button';
+    b.append(el('span', 'gl-n', String(k + 1)),
+      el('span', 'gl-t', `${map.p.rows[g.i].label} × ${map.p.cols[g.j].label}`),
+      el('span', 'gl-c', `${g.o} found, about ${fmtE(g.e)} expected`));
+    b.addEventListener('click', () => openCell(g.i, g.j));
+    li.append(b);
+    return li;
+  }));
+}
+
+/* ---------- Cell detail ---------- */
+
+let detailRecords = [], detailCtl = null;
+
+async function openCell(i, j) {
+  if (!map || map.O[i][j] == null) return;
+  const p = map.p, o = map.O[i][j], e = expected(i, j);
+  cellButton(current?.i, current?.j)?.removeAttribute('aria-current');
+  current = { i, j };
+  cellButton(i, j)?.setAttribute('aria-current', 'true');
+  const term = p.cellTerm(i, j);
+  $('detail').hidden = false;
+  $('detailTitle').textContent = `${p.rows[i].label} × ${p.cols[j].label}`;
+  $('detailSummary').textContent = `${o.toLocaleString()} ${o === 1 ? 'study' : 'studies'} found, about ${fmtE(e)} expected. ` +
+    `${p.rows[i].label} appears in ${map.R[i].toLocaleString()} studies in this field and ${p.cols[j].label.toLowerCase()} in ${map.C[j].toLocaleString()}.`;
+  $('detailQuery').textContent = term;
+  $('detailPubmed').href = 'https://pubmed.ncbi.nlm.nih.gov/?term=' + encodeURIComponent(term);
+  $('detailList').replaceChildren();
+  $('detailCsv').disabled = true;
+  detailRecords = [];
+  $('detail').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  if (!o) { $('detailStatus').textContent = 'No studies match. Check the query on PubMed with broader wording before treating this as a gap.'; return; }
+  detailCtl?.abort();
+  const ctl = detailCtl = new AbortController();
+  $('detailStatus').textContent = 'Loading studies…';
+  try {
+    const { ids } = await search(term, 100, ctl.signal, { sort: 'pub_date' });
+    detailRecords = [];
+    for (let k = 0; k < ids.length; k += BATCH) detailRecords.push(...await fetchRecords(ids.slice(k, k + BATCH), ctl.signal));
+    $('detailStatus').textContent = o > detailRecords.length ? `Showing the newest ${detailRecords.length} of ${o.toLocaleString()}. Open on PubMed for the rest.` : '';
+    $('detailList').replaceChildren(...detailRecords.map(r => recordRow(r, /^$/)));
+    $('detailCsv').disabled = !detailRecords.length;
+  } catch (err) {
+    if (err.name !== 'AbortError') $('detailStatus').textContent = err.message;
+  }
+}
+
+/* ---------- Export and sharing ---------- */
+
+function exportMap() {
+  const p = map.p, head = ['Mechanism', 'Comparison', 'Studies found', 'Expected', 'Found ÷ expected', 'Flag', 'Mechanism total', 'Comparison total', 'Field total', 'PubMed query', 'PubMed link'];
+  const rows = [];
+  p.rows.forEach((r, i) => p.cols.forEach((c, j) => {
+    const o = map.O[i][j], e = expected(i, j);
+    if (o == null) return;
+    rows.push([r.label, c.label, o, e == null ? '' : e.toFixed(2), e ? (o / e).toFixed(2) : '', isGap(o, e) ? 'under-studied' : '',
+      map.R[i], map.C[j], map.N, p.cellTerm(i, j), 'https://pubmed.ncbi.nlm.nih.gov/?term=' + encodeURIComponent(p.cellTerm(i, j))]);
+  }));
+  saveFile(csvTable(head, rows), 'text/csv;charset=utf-8', `gap-map_${slug($('template').selectedOptions[0].text)}_${p.years.replace('–', '-')}.csv`);
+}
+
+async function share() {
+  const url = location.href.split('#')[0] + '#map=' + encodeConfig(readConfig());
+  history.replaceState(null, '', url);
+  try {
+    await navigator.clipboard.writeText(url);
+    $('share').textContent = 'Link copied';
+  } catch {
+    $('share').textContent = 'Link is in the address bar';
+  }
+  setTimeout(() => { $('share').textContent = 'Copy link to this map'; }, 2500);
+}
+
+/* ---------- Wiring ---------- */
+
+function setView(v) {
+  view = v;
+  $('viewRatio').setAttribute('aria-pressed', v === 'ratio');
+  $('viewCount').setAttribute('aria-pressed', v === 'count');
+  if (!map) return;
+  drawLegend();
+  map.p.rows.forEach((_, i) => map.p.cols.forEach((_, j) => drawCell(i, j)));
+}
+
+function saveDraft() { store.set('gap-map-draft', JSON.stringify(readConfig())); }
+
+$('template').addEventListener('change', () => { loadTemplate($('template').value); saveDraft(); preview(); });
+['rows', 'cols', 'context', 'from', 'to'].forEach(id => $(id).addEventListener('input', () => { saveDraft(); estimate(); }));
+['rows', 'cols'].forEach(id => $(id).addEventListener('change', preview));
+$('primary').addEventListener('change', () => { saveDraft(); estimate(); });
+$('form').addEventListener('submit', e => { e.preventDefault(); if (!running) build(); });
+$('stop').addEventListener('click', () => running?.abort());
+$('viewRatio').addEventListener('click', () => setView('ratio'));
+$('viewCount').addEventListener('click', () => setView('count'));
+$('exportMap').addEventListener('click', exportMap);
+$('share').addEventListener('click', share);
+$('matrix').addEventListener('click', e => {
+  const b = e.target.closest('.cell');
+  if (b) openCell(+b.dataset.i, +b.dataset.j);
+});
+$('detailCsv').addEventListener('click', () => {
+  const p = map.p, { i, j } = current;
+  saveFile(toCsv(detailRecords), 'text/csv;charset=utf-8', `gap-map_${slug(p.rows[i].label)}_x_${slug(p.cols[j].label)}.csv`);
+});
+$('apiKey').value = store.get('ncbi-key');
+$('apiKey').addEventListener('change', () => { store.set('ncbi-key', $('apiKey').value.trim()); estimate(); });
+
+/* Before a build, show the empty grid so the layout of the map is visible. */
+function preview() {
+  if (running) return;
+  const p = plan(readConfig());
+  if (p.error) return;
+  map = { p, N: null, R: p.rows.map(() => null), C: p.cols.map(() => null), O: p.rows.map(() => p.cols.map(() => null)) };
+  drawTable();
+  $('gapSection').hidden = true;
+  $('detail').hidden = true;
+  $('exportMap').disabled = true;
+}
+
+const fromLink = location.hash.startsWith('#map=') ? decodeConfig(location.hash.slice(5)) : null;
+let draft = null;
+try { draft = JSON.parse(store.get('gap-map-draft') || 'null'); } catch {}
+if (fromLink) applyConfig(fromLink);
+else if (draft) applyConfig(draft);
+else loadTemplate('evolution');
+preview();
+estimate();
+</script>
+</body>
+</html>
